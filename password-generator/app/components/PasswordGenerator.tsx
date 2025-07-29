@@ -23,6 +23,15 @@ interface PasswordHistoryItem {
   strength: string;
 }
 
+// Type for localStorage data structure
+interface StoredHistoryItem {
+  id: string;
+  password: string;
+  timestamp: string; // ISO string format
+  length: number;
+  strength: string;
+}
+
 export default function PasswordGenerator() {
   const [passwordOptions, setPasswordOptions] = useState<PasswordOptions>({
     length: 12,
@@ -40,8 +49,8 @@ export default function PasswordGenerator() {
     const savedHistory = localStorage.getItem('passwordHistory');
     if (savedHistory) {
       try {
-        const parsed = JSON.parse(savedHistory);
-        setPasswordHistory(parsed.map((item: any) => ({
+        const parsed: StoredHistoryItem[] = JSON.parse(savedHistory);
+        setPasswordHistory(parsed.map((item: StoredHistoryItem) => ({
           ...item,
           timestamp: new Date(item.timestamp)
         })));
