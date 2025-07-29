@@ -1,6 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import PasswordDisplay from './PasswordDisplay';
+import PasswordStrengthMeter from './PasswordStrengthMeter';
+import PasswordHistory from './PasswordHistory';
+import SecurityTips from './SecurityTips';
 
 interface PasswordOptions {
   length: number;
@@ -8,6 +13,14 @@ interface PasswordOptions {
   includeLowercase: boolean;
   includeNumbers: boolean;
   includeSymbols: boolean;
+}
+
+interface PasswordHistoryItem {
+  id: string;
+  password: string;
+  timestamp: Date;
+  length: number;
+  strength: string;
 }
 
 export default function PasswordGenerator() {
@@ -20,6 +33,28 @@ export default function PasswordGenerator() {
   });
   const [generatedPassword, setGeneratedPassword] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
+  const [passwordHistory, setPasswordHistory] = useState<PasswordHistoryItem[]>([]);
+
+  // Load password history from localStorage on component mount
+  useEffect(() => {
+    const savedHistory = localStorage.getItem('passwordHistory');
+    if (savedHistory) {
+      try {
+        const parsed = JSON.parse(savedHistory);
+        setPasswordHistory(parsed.map((item: any) => ({
+          ...item,
+          timestamp: new Date(item.timestamp)
+        })));
+      } catch (error) {
+        console.error('Failed to load password history:', error);
+      }
+    }
+  }, []);
+
+  // Save password history to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('passwordHistory', JSON.stringify(passwordHistory));
+  }, [passwordHistory]);
 
   const generatePassword = (options: PasswordOptions) => {
     let characters = '';
@@ -46,28 +81,9 @@ export default function PasswordGenerator() {
     return password;
   };
 
-  const handleGeneratePassword = (e: React.FormEvent) => {
-    e.preventDefault();
-    const password = generatePassword(passwordOptions);
-    setGeneratedPassword(password);
-    setCopied(false);
-  };
-
-  const copyToClipboard = async () => {
-    if (generatedPassword && generatedPassword !== "Please select at least one character type" && generatedPassword !== "Length must be between 4-50") {
-      try {
-        await navigator.clipboard.writeText(generatedPassword);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      } catch (err) {
-        console.error('Failed to copy password:', err);
-      }
-    }
-  };
-
-  const getPasswordStrength = (password: string) => {
+  const getPasswordStrength = (password: string): string => {
     if (!password || password.includes("Please select") || password.includes("Length must be")) {
-      return { strength: 'none', color: 'text-gray-400', bgColor: 'bg-gray-200' };
+      return 'Very Weak';
     }
     
     let score = 0;
@@ -78,24 +94,122 @@ export default function PasswordGenerator() {
     if (password.length >= 8) score++;
     if (password.length >= 12) score++;
     
-    if (score <= 2) return { strength: 'Weak', color: 'text-red-600', bgColor: 'bg-red-100' };
-    if (score <= 4) return { strength: 'Fair', color: 'text-yellow-600', bgColor: 'bg-yellow-100' };
-    if (score <= 5) return { strength: 'Good', color: 'text-blue-600', bgColor: 'bg-blue-100' };
-    return { strength: 'Strong', color: 'text-green-600', bgColor: 'bg-green-100' };
+    if (score <= 2) return 'Very Weak';
+    if (score <= 4) return 'Weak';
+    if (score <= 5) return 'Fair';
+    if (score <= 6) return 'Good';
+    return 'Strong';
   };
 
-  const strength = getPasswordStrength(generatedPassword);
+  const handleGeneratePassword = (e: React.FormEvent) => {
+    e.preventDefault();
+    const password = generatePassword(passwordOptions);
+    setGeneratedPassword(password);
+    setCopied(false);
+
+    // Add to history if it's a valid password
+    if (password && !password.includes("Please select") && !password.includes("Length must be")) {
+      const newHistoryItem: PasswordHistoryItem = {
+        id: Date.now().toString(),
+        password,
+        timestamp: new Date(),
+        length: password.length,
+        strength: getPasswordStrength(password)
+      };
+      
+      setPasswordHistory(prev => [...prev, newHistoryItem].slice(-20)); // Keep only last 20
+    }
+  };
+
+  const copyToClipboard = async (passwordToCopy: string = generatedPassword) => {
+    if (passwordToCopy && passwordToCopy !== "Please select at least one character type" && passwordToCopy !== "Length must be between 4-50") {
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(passwordToCopy);
+        } else {
+          // fallback for older browsers and insecure contexts
+          const textArea = document.createElement("textarea");
+          textArea.value = passwordToCopy;
+          textArea.style.position = "fixed";
+          textArea.style.left = "-9999px";
+          document.body.appendChild(textArea);
+          textArea.focus();
+          textArea.select();
+          document.execCommand("copy");
+          document.body.removeChild(textArea);
+        }
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      } catch (err) {
+        console.error('Failed to copy password:', err);
+      }
+    }
+  };
+
+  const deleteFromHistory = (id: string) => {
+    setPasswordHistory(prev => prev.filter(item => item.id !== id));
+  };
+
+  const exportHistory = () => {
+    if (passwordHistory.length === 0) return;
+
+    const exportData = passwordHistory.map(item => ({
+      password: item.password,
+      length: item.length,
+      strength: item.strength,
+      generated: item.timestamp.toLocaleString()
+    }));
+
+    const content = exportData.map(item => 
+      `Password: ${item.password}\nLength: ${item.length}\nStrength: ${item.strength}\nGenerated: ${item.generated}\n`
+    ).join('\n---\n\n');
+
+    const blob = new Blob([content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `password-history-${new Date().toISOString().split('T')[0]}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   return (
-    <div className="flex justify-center items-center min-h-screen w-full bg-gradient-to-br from-gray-500 to-gray-700 p-4">
-      <div className="bg-white w-full max-w-md rounded-3xl p-8 shadow-2xl">
-        <h2 className="text-2xl text-gray-800 text-center mb-6 font-bold uppercase tracking-wider">
+    <motion.div 
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5 }}
+      className="flex justify-center items-center min-h-screen w-full bg-gradient-to-br from-gray-500 to-gray-700 p-4"
+    >
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ duration: 0.6, delay: 0.2 }}
+        className="bg-white w-full max-w-2xl rounded-3xl p-8 shadow-2xl"
+      >
+        <motion.h2 
+          initial={{ y: -20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ duration: 0.5, delay: 0.3 }}
+          className="text-2xl text-gray-800 text-center mb-6 font-bold uppercase tracking-wider"
+        >
           Password Generator
-        </h2>
+        </motion.h2>
         
-        <form onSubmit={handleGeneratePassword} className="space-y-6">
+        <motion.form 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.5, delay: 0.4 }}
+          onSubmit={handleGeneratePassword} 
+          className="space-y-6"
+        >
           {/* Password Length */}
-          <div>
+          <motion.div
+            initial={{ x: -20, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            transition={{ duration: 0.5, delay: 0.5 }}
+          >
             <label htmlFor="password-length" className="block text-gray-700 font-medium mb-2">
               Password Length: {passwordOptions.length}
             </label>
@@ -112,10 +226,15 @@ export default function PasswordGenerator() {
               <span>4</span>
               <span>50</span>
             </div>
-          </div>
+          </motion.div>
           
           {/* Character Options */}
-          <div className="space-y-3">
+          <motion.div 
+            initial={{ x: -20, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            transition={{ duration: 0.5, delay: 0.6 }}
+            className="space-y-3"
+          >
             <label className="block text-gray-700 font-medium mb-2">Character Types:</label>
             <div className="space-y-2">
               {[
@@ -123,8 +242,14 @@ export default function PasswordGenerator() {
                 { key: 'includeLowercase', label: 'Lowercase Letters (a-z)' },
                 { key: 'includeNumbers', label: 'Numbers (0-9)' },
                 { key: 'includeSymbols', label: 'Symbols (!@#$%^&*)' }
-              ].map((option) => (
-                <label key={option.key} className="flex items-center space-x-3 cursor-pointer">
+              ].map((option, index) => (
+                <motion.label 
+                  key={option.key} 
+                  initial={{ x: -20, opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  transition={{ duration: 0.3, delay: 0.7 + index * 0.1 }}
+                  className="flex items-center space-x-3 cursor-pointer"
+                >
                   <input
                     type="checkbox"
                     checked={passwordOptions[option.key as keyof PasswordOptions] as boolean}
@@ -135,67 +260,78 @@ export default function PasswordGenerator() {
                     className="w-4 h-4 text-blue-600 bg-gray-100 border-gray-300 rounded focus:ring-blue-500"
                   />
                   <span className="text-gray-700">{option.label}</span>
-                </label>
+                </motion.label>
               ))}
             </div>
-          </div>
+          </motion.div>
           
           {/* Generate Button */}
-          <div className="text-center">
-            <button
+          <motion.div 
+            initial={{ y: 20, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            transition={{ duration: 0.5, delay: 0.8 }}
+            className="text-center"
+          >
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
               type="submit"
               className="bg-blue-500 text-white px-8 py-3 rounded-lg font-medium hover:bg-blue-600 transition-colors duration-300 shadow-lg w-full"
             >
               Generate Password
-            </button>
-          </div>
-        </form>
+            </motion.button>
+          </motion.div>
+        </motion.form>
         
         {/* Generated Password Display */}
-        {generatedPassword && (
-          <div className="mt-6 space-y-4">
-            <div className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-              <div className="flex items-center justify-between">
-                <p className="text-lg font-mono text-gray-800 break-all pr-2">
-                  {generatedPassword}
-                </p>
-                <button
-                  onClick={copyToClipboard}
-                  className="ml-2 p-2 text-blue-500 hover:text-blue-700 transition-colors"
-                  title="Copy to clipboard"
-                >
-                  {copied ? (
-                    <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                      <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                    </svg>
-                  ) : (
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                    </svg>
-                  )}
-                </button>
-              </div>
-            </div>
-            
-            {/* Password Strength Indicator */}
-            {strength.strength !== 'none' && (
-              <div className={`p-3 rounded-lg ${strength.bgColor}`}>
-                <div className="flex items-center justify-between">
-                  <span className={`font-medium ${strength.color}`}>
-                    Password Strength: {strength.strength}
-                  </span>
-                </div>
-              </div>
-            )}
-            
-            {copied && (
-              <div className="text-center text-green-600 font-medium">
-                Password copied to clipboard!
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
+        <AnimatePresence>
+          {generatedPassword && (
+            <motion.div 
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.5 }}
+              className="mt-6 space-y-4"
+            >
+              <PasswordDisplay 
+                password={generatedPassword}
+                onCopy={() => copyToClipboard()}
+                copied={copied}
+              />
+              
+              {/* Password Strength Meter */}
+              <PasswordStrengthMeter password={generatedPassword} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Password History */}
+        <AnimatePresence>
+          {passwordHistory.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5 }}
+            >
+              <PasswordHistory 
+                history={passwordHistory}
+                onCopy={copyToClipboard}
+                onDelete={deleteFromHistory}
+                onExport={exportHistory}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Security Tips */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.9 }}
+        >
+          <SecurityTips />
+        </motion.div>
+      </motion.div>
+    </motion.div>
   );
 } 
